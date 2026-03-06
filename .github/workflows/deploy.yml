@@ -1,0 +1,308 @@
+# =============================================================================
+# DebtSense — Deployment Pipeline
+# =============================================================================
+# Triggered on push to main (after CI passes).
+# Builds Docker images, pushes to ECR, and deploys to ECS/Fargate.
+# Staging deploys automatically; production requires manual approval.
+# =============================================================================
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: staging
+        type: choice
+        options:
+          - staging
+          - production
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+  BACKEND_REPO: debtsense/backend
+  FRONTEND_REPO: debtsense/frontend
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # ===========================================================================
+  # Build & Push Docker Images to ECR
+  # ===========================================================================
+  build-and-push:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tag }}
+      backend-image: ${{ steps.meta.outputs.backend-image }}
+      frontend-image: ${{ steps.meta.outputs.frontend-image }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate image metadata
+        id: meta
+        run: |
+          TAG="${{ github.sha }}-$(date +%Y%m%d%H%M%S)"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "backend-image=${{ env.ECR_REGISTRY }}/${{ env.BACKEND_REPO }}:${TAG}" >> "$GITHUB_OUTPUT"
+          echo "frontend-image=${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_REPO }}:${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.backend
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_REPO }}:${{ steps.meta.outputs.tag }}
+            ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_REPO }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.frontend
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_REPO }}:${{ steps.meta.outputs.tag }}
+            ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_REPO }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ===========================================================================
+  # Deploy to Staging
+  # ===========================================================================
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    environment:
+      name: staging
+      url: https://staging.debtsense.io
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy backend to ECS (Staging)
+        run: |
+          aws ecs update-service \
+            --cluster debtsense-staging-cluster \
+            --service debtsense-staging-backend \
+            --force-new-deployment \
+            --task-definition $(
+              aws ecs describe-task-definition \
+                --task-definition debtsense-staging-backend \
+                --query 'taskDefinition.taskDefinitionArn' \
+                --output text |
+              xargs -I {} aws ecs register-task-definition \
+                --cli-input-json "$(
+                  aws ecs describe-task-definition \
+                    --task-definition debtsense-staging-backend \
+                    --query 'taskDefinition' |
+                  jq --arg IMAGE "${{ needs.build-and-push.outputs.backend-image }}" \
+                    '.containerDefinitions[0].image = $IMAGE |
+                     del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)'
+                )" \
+                --query 'taskDefinition.taskDefinitionArn' \
+                --output text
+            )
+
+      - name: Deploy frontend to ECS (Staging)
+        run: |
+          aws ecs update-service \
+            --cluster debtsense-staging-cluster \
+            --service debtsense-staging-frontend \
+            --force-new-deployment \
+            --task-definition $(
+              aws ecs describe-task-definition \
+                --task-definition debtsense-staging-frontend \
+                --query 'taskDefinition.taskDefinitionArn' \
+                --output text |
+              xargs -I {} aws ecs register-task-definition \
+                --cli-input-json "$(
+                  aws ecs describe-task-definition \
+                    --task-definition debtsense-staging-frontend \
+                    --query 'taskDefinition' |
+                  jq --arg IMAGE "${{ needs.build-and-push.outputs.frontend-image }}" \
+                    '.containerDefinitions[0].image = $IMAGE |
+                     del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)'
+                )" \
+                --query 'taskDefinition.taskDefinitionArn' \
+                --output text
+            )
+
+      - name: Wait for staging deployment to stabilize
+        run: |
+          echo "Waiting for backend service to stabilize..."
+          aws ecs wait services-stable \
+            --cluster debtsense-staging-cluster \
+            --services debtsense-staging-backend
+          echo "Waiting for frontend service to stabilize..."
+          aws ecs wait services-stable \
+            --cluster debtsense-staging-cluster \
+            --services debtsense-staging-frontend
+          echo "Staging deployment complete."
+
+      - name: Run smoke tests against staging
+        run: |
+          echo "Running smoke tests against staging..."
+          for i in $(seq 1 5); do
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://staging.debtsense.io/health)
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "Health check passed (attempt $i)"
+              exit 0
+            fi
+            echo "Health check returned $HTTP_STATUS (attempt $i), retrying in 10s..."
+            sleep 10
+          done
+          echo "Smoke tests failed!"
+          exit 1
+
+  # ===========================================================================
+  # Deploy to Production (requires manual approval)
+  # ===========================================================================
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build-and-push, deploy-staging]
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: production
+      url: https://app.debtsense.io
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Run database migrations
+        run: |
+          echo "Running database migrations against production..."
+          aws ecs run-task \
+            --cluster debtsense-prod-cluster \
+            --task-definition debtsense-prod-backend \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=${{ secrets.PROD_SUBNET_IDS }},securityGroups=${{ secrets.PROD_SG_IDS }},assignPublicIp=DISABLED}" \
+            --overrides '{"containerOverrides":[{"name":"backend","command":["alembic","upgrade","head"]}]}' \
+            --count 1
+
+      - name: Deploy backend to ECS (Production)
+        run: |
+          aws ecs update-service \
+            --cluster debtsense-prod-cluster \
+            --service debtsense-prod-backend \
+            --force-new-deployment \
+            --task-definition $(
+              aws ecs describe-task-definition \
+                --task-definition debtsense-prod-backend \
+                --query 'taskDefinition.taskDefinitionArn' \
+                --output text |
+              xargs -I {} aws ecs register-task-definition \
+                --cli-input-json "$(
+                  aws ecs describe-task-definition \
+                    --task-definition debtsense-prod-backend \
+                    --query 'taskDefinition' |
+                  jq --arg IMAGE "${{ needs.build-and-push.outputs.backend-image }}" \
+                    '.containerDefinitions[0].image = $IMAGE |
+                     del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)'
+                )" \
+                --query 'taskDefinition.taskDefinitionArn' \
+                --output text
+            )
+
+      - name: Deploy frontend to ECS (Production)
+        run: |
+          aws ecs update-service \
+            --cluster debtsense-prod-cluster \
+            --service debtsense-prod-frontend \
+            --force-new-deployment \
+            --task-definition $(
+              aws ecs describe-task-definition \
+                --task-definition debtsense-prod-frontend \
+                --query 'taskDefinition.taskDefinitionArn' \
+                --output text |
+              xargs -I {} aws ecs register-task-definition \
+                --cli-input-json "$(
+                  aws ecs describe-task-definition \
+                    --task-definition debtsense-prod-frontend \
+                    --query 'taskDefinition' |
+                  jq --arg IMAGE "${{ needs.build-and-push.outputs.frontend-image }}" \
+                    '.containerDefinitions[0].image = $IMAGE |
+                     del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)'
+                )" \
+                --query 'taskDefinition.taskDefinitionArn' \
+                --output text
+            )
+
+      - name: Wait for production deployment to stabilize
+        run: |
+          echo "Waiting for backend service to stabilize..."
+          aws ecs wait services-stable \
+            --cluster debtsense-prod-cluster \
+            --services debtsense-prod-backend
+          echo "Waiting for frontend service to stabilize..."
+          aws ecs wait services-stable \
+            --cluster debtsense-prod-cluster \
+            --services debtsense-prod-frontend
+          echo "Production deployment complete."
+
+      - name: Run production smoke tests
+        run: |
+          for i in $(seq 1 5); do
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://app.debtsense.io/health)
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "Production health check passed."
+              exit 0
+            fi
+            echo "Health check returned $HTTP_STATUS (attempt $i), retrying in 15s..."
+            sleep 15
+          done
+          echo "Production smoke tests failed!"
+          exit 1
+
+      - name: Notify deployment success
+        if: success()
+        run: |
+          echo "Production deployment successful!"
+          echo "Backend image: ${{ needs.build-and-push.outputs.backend-image }}"
+          echo "Frontend image: ${{ needs.build-and-push.outputs.frontend-image }}"

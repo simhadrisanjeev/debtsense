@@ -1,0 +1,118 @@
+# =============================================================================
+# DebtSense — Development Docker Compose Overrides
+# =============================================================================
+# Usage (layer on top of the base compose file):
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up -d
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Backend — hot reload via volume mount + --reload flag
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+      target: runtime
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+      --reload-dir /app/app
+      --reload-dir /app/services
+    volumes:
+      - ../backend/app:/app/app
+      - ../services:/app/services
+      - ../database:/app/database
+    environment:
+      - APP_ENV=development
+      - APP_DEBUG=true
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=debtsense_dev
+      - POSTGRES_USER=debtsense_user
+      - POSTGRES_PASSWORD=devpassword
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - JWT_SECRET_KEY=dev-secret-key-not-for-production
+      - ENCRYPTION_KEY=dev-32-byte-encryption-key-!!!!
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LOG_LEVEL=DEBUG
+      - CORS_ORIGINS=http://localhost:3000,http://localhost:3001
+    ports:
+      - "8000:8000"
+      - "5678:5678"  # debugpy remote debugger
+
+  # ---------------------------------------------------------------------------
+  # Frontend — Next.js dev server with hot reload
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+      target: deps
+    command: npm run dev
+    working_dir: /app
+    volumes:
+      - ../frontend:/app
+      - /app/node_modules  # anonymous volume to preserve container node_modules
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
+      - WATCHPACK_POLLING=true  # enable polling for file changes in Docker
+    ports:
+      - "3000:3000"
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL — dev defaults
+  # ---------------------------------------------------------------------------
+  postgres:
+    environment:
+      - POSTGRES_DB=debtsense_dev
+      - POSTGRES_USER=debtsense_user
+      - POSTGRES_PASSWORD=devpassword
+    ports:
+      - "5432:5432"
+
+  # ---------------------------------------------------------------------------
+  # Redis — dev defaults (no password)
+  # ---------------------------------------------------------------------------
+  redis:
+    command: redis-server --save "" --appendonly no  # disable persistence in dev
+    ports:
+      - "6379:6379"
+
+  # ---------------------------------------------------------------------------
+  # Celery Worker — dev mode with auto-reload
+  # ---------------------------------------------------------------------------
+  celery-worker:
+    command: >
+      celery -A services.queue.celery_app worker
+      --loglevel=debug
+      --concurrency=2
+      -Q default,ai_tasks,financial_tasks
+    volumes:
+      - ../backend/app:/app/app
+      - ../services:/app/services
+    environment:
+      - APP_ENV=development
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=debtsense_dev
+      - POSTGRES_USER=debtsense_user
+      - POSTGRES_PASSWORD=devpassword
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - ENCRYPTION_KEY=dev-32-byte-encryption-key-!!!!
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LOG_LEVEL=DEBUG
+
+  # ---------------------------------------------------------------------------
+  # Disable nginx in dev — access services directly
+  # ---------------------------------------------------------------------------
+  nginx:
+    profiles:
+      - disabled

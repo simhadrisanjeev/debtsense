@@ -1,0 +1,198 @@
+# =============================================================================
+# DebtSense — CI Pipeline
+# =============================================================================
+# Runs on every push and pull request to the main branch.
+# Jobs: backend lint/type-check/test, frontend lint/build, Docker build.
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "20"
+
+jobs:
+  # ===========================================================================
+  # Backend — Lint, Type Check, Test
+  # ===========================================================================
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: debtsense_test
+          POSTGRES_USER: debtsense_user
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U debtsense_user -d debtsense_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('backend/pyproject.toml') }}
+          restore-keys: |
+            pip-${{ runner.os }}-
+
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint with Ruff
+        run: |
+          cd backend
+          ruff check app/ tests/ --output-format=github
+
+      - name: Format check with Ruff
+        run: |
+          cd backend
+          ruff format --check app/ tests/
+
+      - name: Type check with mypy
+        run: |
+          cd backend
+          mypy app/ --ignore-missing-imports
+
+      - name: Run tests with pytest
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: debtsense_test
+          POSTGRES_USER: debtsense_user
+          POSTGRES_PASSWORD: test_password
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          JWT_SECRET_KEY: test-secret-key
+          ENCRYPTION_KEY: test-32-byte-encryption-key-!!!!
+          APP_ENV: testing
+        run: |
+          cd backend
+          pytest -v --cov=app --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage report
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.xml
+
+  # ===========================================================================
+  # Frontend — Lint, Type Check, Build
+  # ===========================================================================
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Lint
+        run: |
+          cd frontend
+          npm run lint
+
+      - name: Run tests
+        run: |
+          cd frontend
+          npm run test:ci
+
+      - name: Build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+        run: |
+          cd frontend
+          npm run build
+
+      - name: Upload test coverage
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: frontend/coverage/
+
+  # ===========================================================================
+  # Docker Build — verify images build successfully
+  # ===========================================================================
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.backend
+          push: false
+          tags: debtsense-backend:ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.frontend
+          push: false
+          tags: debtsense-frontend:ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

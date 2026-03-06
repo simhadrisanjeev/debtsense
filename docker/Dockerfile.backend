@@ -1,0 +1,74 @@
+# =============================================================================
+# DebtSense Backend — Multi-stage Dockerfile
+# Python 3.11 / FastAPI / Uvicorn
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Stage 1: Builder — install dependencies and build wheels
+# ---------------------------------------------------------------------------
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+# Install build dependencies required for compiled wheels (asyncpg, cryptography)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy only dependency manifests first to leverage Docker layer cache
+COPY backend/pyproject.toml backend/pyproject.toml
+
+# Build wheels into a cache directory
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip wheel --no-cache-dir --wheel-dir=/build/wheels -e backend/
+
+# ---------------------------------------------------------------------------
+# Stage 2: Runtime — lean production image
+# ---------------------------------------------------------------------------
+FROM python:3.11-slim AS runtime
+
+# Install only the runtime library needed by asyncpg
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libpq5 \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user
+RUN groupadd --gid 1000 appuser && \
+    useradd --uid 1000 --gid appuser --shell /bin/bash --create-home appuser
+
+WORKDIR /app
+
+# Copy pre-built wheels from the builder stage and install them
+COPY --from=builder /build/wheels /tmp/wheels
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir /tmp/wheels/* && \
+    rm -rf /tmp/wheels
+
+# Copy application source code
+COPY backend/app ./app
+COPY services ./services
+COPY backend/alembic.ini ./alembic.ini
+COPY database ./database
+
+# Switch to non-root user
+USER appuser
+
+# Expose the API port
+EXPOSE 8000
+
+# Health check — hit the /health endpoint every 30 seconds
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Start the application with Uvicorn
+CMD ["uvicorn", "app.main:app", \
+     "--host", "0.0.0.0", \
+     "--port", "8000", \
+     "--workers", "4", \
+     "--loop", "uvloop", \
+     "--http", "httptools", \
+     "--access-log"]

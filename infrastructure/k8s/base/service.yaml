@@ -1,0 +1,26 @@
+# =============================================================================
+# DebtSense — Kubernetes Backend Service
+# =============================================================================
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: debtsense-backend
+  labels:
+    app: debtsense
+    component: backend
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8000"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  selector:
+    app: debtsense
+    component: backend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+  sessionAffinity: None

@@ -1,0 +1,72 @@
+# =============================================================================
+# DebtSense Frontend — Multi-stage Dockerfile
+# Node 20 / Next.js 14 with standalone output
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Stage 1: Dependencies — install node_modules
+# ---------------------------------------------------------------------------
+FROM node:20-alpine AS deps
+
+WORKDIR /app
+
+# Copy dependency manifests
+COPY frontend/package.json frontend/package-lock.json* ./
+
+# Install production + dev dependencies (dev needed for build step)
+RUN npm ci
+
+# ---------------------------------------------------------------------------
+# Stage 2: Builder — build the Next.js application
+# ---------------------------------------------------------------------------
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy node_modules from deps stage
+COPY --from=deps /app/node_modules ./node_modules
+
+# Copy the full frontend source
+COPY frontend/ ./
+
+# Set Next.js to produce a standalone build (smaller output)
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Build the application
+RUN npm run build
+
+# ---------------------------------------------------------------------------
+# Stage 3: Runner — lean production image
+# ---------------------------------------------------------------------------
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Create a non-root user
+RUN addgroup --system --gid 1001 nextjs && \
+    adduser --system --uid 1001 nextjs
+
+# Copy the standalone build output from the builder stage
+# Next.js standalone output includes a minimal server and all required deps
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nextjs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nextjs /app/.next/static ./.next/static
+
+# Switch to non-root user
+USER nextjs
+
+# Expose the frontend port
+EXPOSE 3000
+
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1
+
+# Start the Next.js standalone server
+CMD ["node", "server.js"]
