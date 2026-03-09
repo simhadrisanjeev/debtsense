@@ -1,5 +1,5 @@
 """
-FastAPI router for debt CRUD and summary endpoints.
+FastAPI router for debt CRUD, payment overrides, and schedule endpoints.
 """
 
 import uuid
@@ -12,25 +12,23 @@ from app.modules.debts.schemas import (
     DebtResponse,
     DebtSummary,
     DebtUpdate,
+    PaymentOverrideCreate,
+    PaymentOverrideResponse,
+    PaymentOverrideUpdate,
+    PaymentScheduleResponse,
 )
 from app.modules.debts.service import DebtService
 
 router = APIRouter()
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _service(db: DbSession) -> DebtService:
-    """Shorthand factory -- keeps route signatures clean."""
     return DebtService(db)
 
 
 # ---------------------------------------------------------------------------
-# Endpoints
+# Debt CRUD
 # ---------------------------------------------------------------------------
-
 
 @router.get(
     "/",
@@ -40,17 +38,13 @@ def _service(db: DbSession) -> DebtService:
 async def list_debts(
     db: DbSession,
     current_user: CurrentUser,
-    offset: int = Query(0, ge=0, description="Number of records to skip"),
-    limit: int = Query(50, ge=1, le=100, description="Max records to return"),
-    active_only: bool = Query(True, description="Only return active debts"),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    active_only: bool = Query(True),
 ) -> list[DebtResponse]:
-    """Return a paginated list of debts belonging to the authenticated user."""
     service = _service(db)
     debts = await service.list_debts(
-        current_user.id,
-        offset=offset,
-        limit=limit,
-        active_only=active_only,
+        current_user.id, offset=offset, limit=limit, active_only=active_only,
     )
     return [DebtResponse.model_validate(d) for d in debts]
 
@@ -66,7 +60,6 @@ async def create_debt(
     db: DbSession,
     current_user: CurrentUser,
 ) -> DebtResponse:
-    """Persist a new debt record for the authenticated user."""
     service = _service(db)
     debt = await service.create(current_user.id, payload)
     return DebtResponse.model_validate(debt)
@@ -81,7 +74,6 @@ async def get_debt_summary(
     db: DbSession,
     current_user: CurrentUser,
 ) -> DebtSummary:
-    """Return aggregated statistics across all active debts for the user."""
     service = _service(db)
     return await service.get_summary(current_user.id)
 
@@ -96,7 +88,6 @@ async def get_debt(
     db: DbSession,
     current_user: CurrentUser,
 ) -> DebtResponse:
-    """Retrieve one debt record by its ID (must belong to the caller)."""
     service = _service(db)
     debt = await service.get_by_id(debt_id, current_user.id)
     return DebtResponse.model_validate(debt)
@@ -113,7 +104,6 @@ async def update_debt(
     db: DbSession,
     current_user: CurrentUser,
 ) -> DebtResponse:
-    """Partially update an existing debt record."""
     service = _service(db)
     debt = await service.update(debt_id, current_user.id, payload)
     return DebtResponse.model_validate(debt)
@@ -129,11 +119,93 @@ async def delete_debt(
     db: DbSession,
     current_user: CurrentUser,
 ) -> DebtResponse:
-    """Soft-delete a debt by marking it inactive.
-
-    The record is not physically removed. The updated debt (with
-    ``is_active=False``) is returned so the client can confirm the change.
-    """
     service = _service(db)
     debt = await service.delete(debt_id, current_user.id)
     return DebtResponse.model_validate(debt)
+
+
+# ---------------------------------------------------------------------------
+# Payment Overrides
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/{debt_id}/payment-overrides",
+    response_model=list[PaymentOverrideResponse],
+    summary="List payment overrides for a debt",
+)
+async def list_payment_overrides(
+    debt_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> list[PaymentOverrideResponse]:
+    service = _service(db)
+    overrides = await service.list_overrides(debt_id, current_user.id)
+    return [PaymentOverrideResponse.model_validate(o) for o in overrides]
+
+
+@router.post(
+    "/{debt_id}/payment-overrides",
+    response_model=PaymentOverrideResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a payment override",
+)
+async def create_payment_override(
+    debt_id: uuid.UUID,
+    payload: PaymentOverrideCreate,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> PaymentOverrideResponse:
+    service = _service(db)
+    override = await service.create_override(debt_id, current_user.id, payload)
+    return PaymentOverrideResponse.model_validate(override)
+
+
+@router.put(
+    "/payment-overrides/{override_id}",
+    response_model=PaymentOverrideResponse,
+    summary="Update a payment override",
+)
+async def update_payment_override(
+    override_id: uuid.UUID,
+    payload: PaymentOverrideUpdate,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> PaymentOverrideResponse:
+    service = _service(db)
+    override = await service.update_override(override_id, current_user.id, payload)
+    return PaymentOverrideResponse.model_validate(override)
+
+
+@router.delete(
+    "/payment-overrides/{override_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a payment override",
+)
+async def delete_payment_override(
+    override_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> None:
+    service = _service(db)
+    await service.delete_override(override_id, current_user.id)
+
+
+# ---------------------------------------------------------------------------
+# Payment Schedule
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/{debt_id}/schedule",
+    response_model=PaymentScheduleResponse,
+    summary="Generate projected payment schedule",
+)
+async def get_payment_schedule(
+    debt_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+    months: int = Query(60, ge=1, le=360),
+) -> PaymentScheduleResponse:
+    service = _service(db)
+    return await service.generate_payment_schedule(
+        debt_id, current_user.id, months=months,
+    )

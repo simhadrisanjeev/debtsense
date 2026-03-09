@@ -13,7 +13,7 @@ from app.core.config import settings
 from app.core.exceptions import AuthenticationError, ConflictError
 from app.core.security import create_access_token, create_refresh_token, decode_token
 from app.modules.auth.models import RefreshToken
-from app.modules.auth.schemas import TokenResponse
+from app.modules.auth.schemas import TokenResponse, TokenUser
 
 # ---------------------------------------------------------------------------
 # Password hashing
@@ -56,13 +56,15 @@ async def _issue_token_pair(
     db: AsyncSession,
     user_id: uuid.UUID,
     extra_claims: dict | None = None,
+    user: object | None = None,
 ) -> TokenResponse:
     """Create an access + refresh token pair and persist the refresh token."""
     subject = str(user_id)
     access = create_access_token(subject, extra_claims=extra_claims)
     refresh = create_refresh_token(subject)
     await _persist_refresh_token(db, user_id, refresh)
-    return TokenResponse(access_token=access, refresh_token=refresh)
+    token_user = TokenUser.model_validate(user) if user is not None else None
+    return TokenResponse(access_token=access, refresh_token=refresh, user=token_user)
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +94,7 @@ class AuthService:
         if not user.is_active:
             raise AuthenticationError("Account is deactivated")
 
-        return await _issue_token_pair(db, user.id)
+        return await _issue_token_pair(db, user.id, user=user)
 
     @staticmethod
     async def register(
@@ -119,7 +121,7 @@ class AuthService:
         db.add(user)
         await db.flush()
 
-        return await _issue_token_pair(db, user.id)
+        return await _issue_token_pair(db, user.id, user=user)
 
     @staticmethod
     async def refresh_token(

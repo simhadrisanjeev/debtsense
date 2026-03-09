@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     BACKEND_WORKERS: int = 4
 
     # Database
+    USE_SQLITE: bool = False
+    SQLITE_PATH: str = "debtsense_dev.db"
     POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: int = 5432
     POSTGRES_DB: str = "debtsense"
@@ -38,6 +40,8 @@ class Settings(BaseSettings):
 
     @property
     def DATABASE_URL(self) -> str:
+        if self.USE_SQLITE:
+            return f"sqlite+aiosqlite:///{self.SQLITE_PATH}"
         return (
             f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
@@ -45,6 +49,8 @@ class Settings(BaseSettings):
 
     @property
     def DATABASE_URL_SYNC(self) -> str:
+        if self.USE_SQLITE:
+            return f"sqlite:///{self.SQLITE_PATH}"
         return (
             f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"

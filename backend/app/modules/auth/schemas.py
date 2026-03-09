@@ -2,6 +2,8 @@
 Pydantic v2 request / response schemas for the auth module.
 """
 
+import uuid
+
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
@@ -25,12 +27,24 @@ class RegisterRequest(BaseModel):
     last_name: str = Field(min_length=1, max_length=100)
 
 
+class TokenUser(BaseModel):
+    """Minimal user info included in token responses."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    email: str
+    first_name: str
+    last_name: str
+
+
 class TokenResponse(BaseModel):
     """JWT token pair returned after successful authentication."""
 
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+    user: TokenUser | None = None
 
 
 class RefreshRequest(BaseModel):

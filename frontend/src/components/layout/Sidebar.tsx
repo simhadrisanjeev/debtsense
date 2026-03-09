@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useState, useTransition, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
@@ -12,6 +13,7 @@ import {
   Brain,
   Settings,
   TrendingUp,
+  Loader2,
 } from "lucide-react";
 
 const navItems = [
@@ -26,6 +28,25 @@ const navItems = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
+
+  // Clear pending state once navigation completes
+  useEffect(() => {
+    if (!isPending) {
+      setPendingHref(null);
+    }
+  }, [isPending]);
+
+  function handleNav(e: React.MouseEvent<HTMLAnchorElement>, href: string) {
+    e.preventDefault();
+    if (href === pathname) return;
+    setPendingHref(href);
+    startTransition(() => {
+      router.push(href);
+    });
+  }
 
   return (
     <aside className="hidden w-64 shrink-0 border-r border-gray-200 bg-white lg:block">
@@ -41,28 +62,35 @@ export function Sidebar() {
         {/* Navigation */}
         <nav className="flex-1 space-y-1 px-3 py-4">
           {navItems.map((item) => {
-            const Icon = item.icon;
             const isActive =
               pathname === item.href ||
               (item.href !== "/dashboard" && pathname.startsWith(item.href));
+            const isLoading = isPending && pendingHref === item.href;
+            const Icon = item.icon;
 
             return (
               <Link
                 key={item.href}
                 href={item.href}
+                onClick={(e) => handleNav(e, item.href)}
                 className={cn(
                   "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                   isActive
                     ? "bg-primary-50 text-primary-700"
                     : "text-gray-600 hover:bg-gray-100 hover:text-gray-900",
+                  isLoading && "bg-gray-100 text-gray-900",
                 )}
               >
-                <Icon
-                  className={cn(
-                    "h-5 w-5 shrink-0",
-                    isActive ? "text-primary-600" : "text-gray-400",
-                  )}
-                />
+                {isLoading ? (
+                  <Loader2 className="h-5 w-5 shrink-0 animate-spin text-primary-600" />
+                ) : (
+                  <Icon
+                    className={cn(
+                      "h-5 w-5 shrink-0",
+                      isActive ? "text-primary-600" : "text-gray-400",
+                    )}
+                  />
+                )}
                 {item.label}
               </Link>
             );

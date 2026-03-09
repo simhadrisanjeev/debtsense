@@ -60,6 +60,10 @@ class LLMClient:
     )
     async def complete(self, messages: list[dict[str, str]]) -> str:
         """Send a chat completion request to the configured LLM provider."""
+        # Fail fast if no API key for cloud providers
+        if not self.api_key and self.provider != LLMProvider.LOCAL:
+            raise LLMError(f"No API key configured for {self.provider.value} provider")
+
         handler = {
             LLMProvider.OPENAI: self._complete_openai,
             LLMProvider.ANTHROPIC: self._complete_anthropic,

@@ -25,7 +25,7 @@ GUIDELINES:
 8. Always end with one actionable next step the user can take today.
 
 RESPONSE FORMAT:
-Provide your advice as clear, structured text. Include:
+Keep responses concise (under 300 words). Provide your advice as clear, structured text. Include:
 - A direct answer to the user's question
 - 2–4 concrete suggestions
 - A risk assessment (low / medium / high) based on the financial context

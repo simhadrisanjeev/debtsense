@@ -105,3 +105,28 @@ async def list_events(
         limit=limit,
     )
     return [EventResponse.model_validate(e) for e in events]
+
+
+@router.get(
+    "/income-summary",
+    summary="Get income summary for a month",
+)
+async def get_income_summary(
+    db: DbSession,
+    current_user: CurrentUser,
+    month: str | None = Query(
+        None,
+        pattern=r"^\d{4}-(0[1-9]|1[0-2])$",
+        description="Month in YYYY-MM format (defaults to current month)",
+    ),
+) -> dict:
+    """Return an aggregated income breakdown for the requested month."""
+    from app.modules.income.service import IncomeService
+
+    income_svc = IncomeService(db)
+    target = None
+    if month:
+        parts = month.split("-")
+        target = date(int(parts[0]), int(parts[1]), 1)
+    summary = await income_svc.get_income_summary(current_user.id, target)
+    return summary

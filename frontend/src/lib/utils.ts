@@ -1,6 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { format, parseISO } from "date-fns";
+import { format, formatDistanceToNow, parseISO } from "date-fns";
 
 /**
  * Merge class names with Tailwind CSS conflict resolution.
@@ -71,4 +71,11 @@ export function capitalize(str: string): string {
  */
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Format a date string as a relative time (e.g. "2 hours ago").
+ */
+export function formatRelativeTime(dateStr: string): string {
+  return formatDistanceToNow(parseISO(dateStr), { addSuffix: true });
 }

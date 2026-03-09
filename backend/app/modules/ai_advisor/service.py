@@ -7,6 +7,7 @@ from decimal import Decimal
 
 import structlog
 
+from app.core.config import settings
 from app.modules.ai_advisor.llm_client import get_llm_client, LLMError
 from app.modules.ai_advisor.prompts import SYSTEM_PROMPT, QUICK_TIPS_PROMPT, build_context_prompt
 from app.modules.ai_advisor.schemas import (
@@ -19,11 +20,30 @@ from app.modules.ai_advisor.schemas import (
 
 logger = structlog.get_logger()
 
+_PLACEHOLDER_KEYS = {"your-llm-api-key", "your-fallback-key", "your-api-key", "sk-xxx", ""}
+
+
+def _has_valid_api_key() -> bool:
+    """Check if a real (non-placeholder) LLM API key is configured."""
+    if settings.LLM_PROVIDER == "local":
+        return True
+    return bool(settings.LLM_API_KEY) and settings.LLM_API_KEY not in _PLACEHOLDER_KEYS
+
 
 class AIAdvisorService:
     @staticmethod
     async def get_advice(request: AdvisorRequest) -> AdvisorResponse:
         """Get AI-powered financial advice."""
+        # Skip LLM call entirely when no valid API key is configured
+        if not _has_valid_api_key():
+            logger.info("ai_advisor.no_api_key", provider=settings.LLM_PROVIDER)
+            return AdvisorResponse(
+                advice="AI advisor is not configured yet. Please set up an LLM API key (OpenAI or Anthropic) in the environment to enable AI-powered advice. In the meantime, check out the Strategies page for debt payoff comparisons.",
+                suggestions=["Review your debt payoff strategies", "Try the snowball or avalanche method", "Set up a monthly budget"],
+                risk_level=_assess_risk(request.context) if request.context else "unknown",
+                disclaimer="This is educational guidance, not professional financial advice. Consult a certified financial planner for personalised recommendations.",
+            )
+
         client = get_llm_client()
 
         messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -47,6 +67,7 @@ class AIAdvisorService:
                 advice="I'm sorry, I'm temporarily unable to provide advice. Please try again later.",
                 suggestions=["Try rephrasing your question", "Check back in a few minutes"],
                 risk_level="unknown",
+                disclaimer="This is educational guidance, not professional financial advice. Consult a certified financial planner for personalised recommendations.",
             )
 
         # Parse the response into structured output
@@ -54,11 +75,21 @@ class AIAdvisorService:
             advice=raw_response,
             suggestions=_extract_suggestions(raw_response),
             risk_level=_assess_risk(request.context) if request.context else "unknown",
+            disclaimer="This is educational guidance, not professional financial advice. Consult a certified financial planner for personalised recommendations.",
         )
 
     @staticmethod
     async def get_quick_tips(context: AdvisorContext) -> QuickTipsResponse:
         """Generate personalized quick tips based on financial profile."""
+        # Skip LLM call entirely when no valid API key is configured
+        if not _has_valid_api_key():
+            logger.info("ai_advisor.quick_tips.no_api_key", provider=settings.LLM_PROVIDER)
+            return QuickTipsResponse(tips=[
+                QuickTip(tip="Focus on paying off your highest-interest debt first", category="strategy", priority=1),
+                QuickTip(tip="Review your subscriptions for any you can cancel", category="budgeting", priority=2),
+                QuickTip(tip="Build a small emergency fund to avoid new debt", category="savings", priority=3),
+            ])
+
         client = get_llm_client()
         context_text = build_context_prompt(context)
         prompt = QUICK_TIPS_PROMPT.format(context=context_text)

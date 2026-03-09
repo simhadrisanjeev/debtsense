@@ -4,8 +4,7 @@ User SQLAlchemy model.
 
 import uuid
 
-from sqlalchemy import Boolean, String
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Boolean, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.base_model import Base, TimestampMixin
@@ -17,7 +16,7 @@ class User(TimestampMixin, Base):
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        Uuid(),
         primary_key=True,
         default=uuid.uuid4,
     )

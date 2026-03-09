@@ -5,8 +5,8 @@ SQLAlchemy models for user analytics events and monthly financial snapshots.
 import uuid
 from datetime import date
 
-from sqlalchemy import Date, ForeignKey, Index, Integer, Numeric, String
-from sqlalchemy.dialects.postgresql import JSON, UUID
+from sqlalchemy import Date, ForeignKey, Index, Integer, Numeric, String, Uuid
+from sqlalchemy.types import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.base_model import Base, TimestampMixin
@@ -18,12 +18,12 @@ class AnalyticsEvent(TimestampMixin, Base):
     __tablename__ = "analytics_events"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        Uuid(),
         primary_key=True,
         default=uuid.uuid4,
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        Uuid(),
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -56,12 +56,12 @@ class MonthlySnapshot(TimestampMixin, Base):
     __tablename__ = "monthly_snapshots"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        Uuid(),
         primary_key=True,
         default=uuid.uuid4,
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        Uuid(),
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )

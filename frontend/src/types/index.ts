@@ -36,52 +36,97 @@ export interface Debt {
   id: string;
   user_id: string;
   name: string;
-  category: string;
-  current_balance: number;
-  interest_rate: number;
-  minimum_payment: number;
-  due_date: number;
-  start_balance: number;
+  debt_type: string;
+  lender_name: string | null;
+  principal_amount: string;
+  current_balance: string;
+  interest_rate: string;
+  interest_type: string;
+  repayment_style: string;
+  payment_frequency: string;
+  minimum_payment: string;
+  due_day_of_month: number;
   start_date: string;
-  lender: string;
-  notes: string;
+  end_date: string | null;
   is_active: boolean;
+  notes: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export interface DebtCreate {
   name: string;
-  category: string;
-  current_balance: number;
-  interest_rate: number;
-  minimum_payment: number;
-  due_date?: number;
-  start_balance?: number;
+  debt_type: string;
+  lender_name?: string | null;
+  principal_amount: string;
+  current_balance: string;
+  interest_rate: string;
+  interest_type?: string;
+  repayment_style?: string;
+  payment_frequency?: string;
+  minimum_payment: string;
+  due_day_of_month?: number;
   start_date?: string;
-  lender?: string;
-  notes?: string;
+  end_date?: string | null;
+  is_active?: boolean;
+  notes?: string | null;
 }
 
 export interface DebtUpdate extends Partial<DebtCreate> {}
 
 // ─── Income ──────────────────────────────────────────────────────────────────
 
+export type IncomeTypeValue =
+  | "salary"
+  | "freelance"
+  | "business"
+  | "bonus"
+  | "gift"
+  | "investment"
+  | "other";
+
+export type IncomeAllocationTypeValue = "same_month" | "next_month";
+
 export interface Income {
   id: string;
   user_id: string;
-  source: string;
+  income_type: IncomeTypeValue;
   amount: number;
-  frequency: "weekly" | "biweekly" | "monthly" | "annually";
+  date_received: string;
+  allocation_month: string;
+  income_allocation_type: IncomeAllocationTypeValue;
+  is_recurring: boolean;
+  recurring_day: number | null;
   is_active: boolean;
+  note: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export interface IncomeCreate {
-  source: string;
+  income_type: IncomeTypeValue;
   amount: number;
-  frequency: "weekly" | "biweekly" | "monthly" | "annually";
+  date_received: string;
+  income_allocation_type?: IncomeAllocationTypeValue;
+  is_recurring?: boolean;
+  recurring_day?: number | null;
+  note?: string | null;
+}
+
+export interface IncomeUpdate extends Partial<IncomeCreate> {}
+
+export interface IncomeByTypeBreakdown {
+  income_type: string;
+  total: number;
+  count: number;
+}
+
+export interface IncomeSummary {
+  user_id: string;
+  month: string;
+  monthly_total: number;
+  entry_count: number;
+  breakdown: IncomeByTypeBreakdown[];
 }
 
 // ─── Expense ─────────────────────────────────────────────────────────────────
@@ -93,7 +138,8 @@ export interface Expense {
   description: string;
   amount: number;
   frequency: "weekly" | "biweekly" | "monthly" | "annually" | "one-time";
-  is_essential: boolean;
+  is_recurring: boolean;
+  is_active: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -103,82 +149,106 @@ export interface ExpenseCreate {
   description: string;
   amount: number;
   frequency: "weekly" | "biweekly" | "monthly" | "annually" | "one-time";
-  is_essential?: boolean;
+  is_recurring?: boolean;
 }
 
 // ─── Financial Engine ────────────────────────────────────────────────────────
 
-export type PayoffStrategy = "avalanche" | "snowball" | "hybrid";
+export interface DebtInput {
+  name: string;
+  balance: string;
+  interest_rate: string;
+  minimum_payment: string;
+}
+
+export type PayoffStrategy = "avalanche" | "snowball" | "hybrid" | "custom";
+
+export interface PayoffScheduleEntry {
+  month: number;
+  debt_name: string;
+  payment: string;
+  principal: string;
+  interest: string;
+  remaining_balance: string;
+}
 
 export interface PayoffResult {
-  strategy: PayoffStrategy;
+  strategy: string;
   total_months: number;
-  total_interest_paid: number;
-  total_amount_paid: number;
-  monthly_schedule: MonthlyScheduleEntry[];
+  total_interest_paid: string;
+  total_paid: string;
+  payoff_order: string[];
+  schedule: PayoffScheduleEntry[];
   debt_free_date: string;
-}
-
-export interface MonthlyScheduleEntry {
-  month: number;
-  date: string;
-  payments: DebtPayment[];
-  total_payment: number;
-  remaining_balance: number;
-}
-
-export interface DebtPayment {
-  debt_id: string;
-  debt_name: string;
-  payment_amount: number;
-  principal: number;
-  interest: number;
-  remaining_balance: number;
 }
 
 export interface StrategyComparison {
   strategies: PayoffResult[];
-  recommended: PayoffStrategy;
-  savings_vs_minimum: number;
-  fastest_strategy: PayoffStrategy;
-  cheapest_strategy: PayoffStrategy;
+  recommended: string;
+  interest_savings_vs_minimum: string;
 }
 
-export interface SimulationParams {
-  extra_payment?: number;
-  income_change?: number;
-  expense_change?: number;
-  new_debt?: DebtCreate;
-  removed_debt_id?: string;
+// ─── Simulation Engine ──────────────────────────────────────────────────────
+
+export interface ScenarioInput {
+  scenario_type: "extra_payment" | "rate_change" | "new_debt" | "income_change" | "lump_sum";
+  parameters: Record<string, unknown>;
+}
+
+export interface SimulationRequest {
+  base_debts: DebtInput[];
+  base_extra_payment?: string;
+  scenarios: ScenarioInput[];
 }
 
 export interface SimulationResult {
-  baseline: PayoffResult;
-  simulated: PayoffResult;
-  months_difference: number;
-  interest_difference: number;
-  total_saved: number;
+  scenario_type: string;
+  description: string;
+  original_payoff_months: number;
+  new_payoff_months: number;
+  original_total_interest: string;
+  new_total_interest: string;
+  monthly_savings: string;
+  total_savings: string;
+}
+
+export interface SimulationResponse {
+  results: SimulationResult[];
+  generated_at: string;
 }
 
 // ─── AI Advisor ──────────────────────────────────────────────────────────────
 
+export interface AdvisorContext {
+  total_debt: string;
+  total_income: string;
+  total_expenses: string;
+  debt_count: number;
+  highest_rate_debt: string;
+  debt_to_income_ratio: string;
+}
+
 export interface AdvisorRequest {
-  question?: string;
-  context?: string;
+  question: string;
+  context?: AdvisorContext | null;
+  conversation_history?: Array<{ role: string; content: string }>;
 }
 
 export interface AdvisorResponse {
   advice: string;
-  recommendations: Recommendation[];
-  confidence: number;
-  sources: string[];
+  suggestions: string[];
+  risk_level: string;
+  disclaimer: string;
 }
 
-export interface Recommendation {
-  title: string;
-  description: string;
-  impact: "high" | "medium" | "low";
+export interface QuickTip {
+  tip: string;
   category: string;
+  priority: number;
+}
+
+export interface QuickTipsResponse {
+  tips: QuickTip[];
 }
 
 // ─── Notifications ───────────────────────────────────────────────────────────
@@ -186,26 +256,30 @@ export interface Recommendation {
 export interface Notification {
   id: string;
   user_id: string;
-  type: "info" | "warning" | "success" | "achievement";
   title: string;
-  message: string;
+  body: string;
+  notification_type: string;
+  channel: string;
   is_read: boolean;
   created_at: string;
+  updated_at: string;
+}
+
+export interface NotificationListResponse {
+  items: Notification[];
+  unread_count: number;
 }
 
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 
 export interface DashboardStats {
-  total_debt: number;
-  total_monthly_payment: number;
-  total_interest_saved: number;
-  debt_free_date: string;
-  debts_count: number;
-  active_debts_count: number;
-  total_income: number;
-  total_expenses: number;
-  disposable_income: number;
-  payoff_progress_percent: number;
+  total_debt: string;
+  total_income: string;
+  total_expenses: string;
+  debt_count: number;
+  monthly_payment: string;
+  estimated_payoff_date: string | null;
+  debt_free_progress_pct: string;
 }
 
 // ─── Pagination ──────────────────────────────────────────────────────────────

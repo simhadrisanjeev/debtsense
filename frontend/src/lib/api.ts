@@ -8,20 +8,24 @@ import type {
   Debt,
   DebtCreate,
   DebtUpdate,
+  DebtInput,
   Income,
   IncomeCreate,
+  IncomeSummary,
   Expense,
   ExpenseCreate,
   StrategyComparison,
-  SimulationParams,
+  SimulationRequest,
+  SimulationResponse,
   SimulationResult,
   PayoffResult,
   PayoffStrategy,
   AdvisorRequest,
   AdvisorResponse,
+  AdvisorContext,
+  QuickTipsResponse,
   DashboardStats,
-  Notification,
-  PaginatedResponse,
+  NotificationListResponse,
 } from "@/types";
 
 // ─── Axios Instance ──────────────────────────────────────────────────────────
@@ -148,8 +152,8 @@ export const authApi = {
     return api.get<User>("/auth/me");
   },
 
-  logout() {
-    return api.post("/auth/logout");
+  logout(refreshToken: string) {
+    return api.post("/auth/logout", { refresh_token: refreshToken });
   },
 };
 
@@ -157,7 +161,7 @@ export const authApi = {
 
 export const debtsApi = {
   list(params?: { page?: number; page_size?: number }) {
-    return api.get<PaginatedResponse<Debt>>("/debts", { params });
+    return api.get<Debt[]>("/debts/", { params });
   },
 
   get(id: string) {
@@ -165,11 +169,11 @@ export const debtsApi = {
   },
 
   create(data: DebtCreate) {
-    return api.post<Debt>("/debts", data);
+    return api.post<Debt>("/debts/", data);
   },
 
   update(id: string, data: DebtUpdate) {
-    return api.put<Debt>(`/debts/${id}`, data);
+    return api.patch<Debt>(`/debts/${id}`, data);
   },
 
   delete(id: string) {
@@ -181,7 +185,11 @@ export const debtsApi = {
 
 export const incomeApi = {
   list() {
-    return api.get<Income[]>("/income");
+    return api.get<Income[]>("/income/");
+  },
+
+  listByMonth(month: string) {
+    return api.get<Income[]>(`/income/month/${month}`);
   },
 
   get(id: string) {
@@ -189,15 +197,20 @@ export const incomeApi = {
   },
 
   create(data: IncomeCreate) {
-    return api.post<Income>("/income", data);
+    return api.post<Income>("/income/", data);
   },
 
   update(id: string, data: Partial<IncomeCreate>) {
-    return api.put<Income>(`/income/${id}`, data);
+    return api.patch<Income>(`/income/${id}`, data);
   },
 
   delete(id: string) {
     return api.delete(`/income/${id}`);
+  },
+
+  getSummary(month?: string) {
+    const params = month ? { month } : {};
+    return api.get<IncomeSummary>("/analytics/income-summary", { params });
   },
 };
 
@@ -228,18 +241,20 @@ export const expensesApi = {
 // ─── Financial Engine API ───────────────────────────────────────────────────
 
 export const engineApi = {
-  calculatePayoff(strategy: PayoffStrategy, extraPayment?: number) {
-    return api.get<PayoffResult>("/engine/payoff", {
-      params: { strategy, extra_payment: extraPayment },
-    });
+  calculatePayoff(data: { debts: DebtInput[]; strategy: PayoffStrategy; extra_payment?: string }) {
+    return api.post<PayoffResult>("/financial-engine/calculate", data);
   },
 
-  compareStrategies() {
-    return api.get<StrategyComparison>("/engine/compare");
+  compareStrategies(data: { debts: DebtInput[]; extra_payment?: string }) {
+    return api.post<StrategyComparison>("/financial-engine/compare", data);
   },
 
-  simulate(params: SimulationParams) {
-    return api.post<SimulationResult>("/engine/simulate", params);
+  simulate(data: SimulationRequest) {
+    return api.post<SimulationResult>("/simulations/run", data);
+  },
+
+  simulateBatch(data: SimulationRequest) {
+    return api.post<SimulationResponse>("/simulations/batch", data);
   },
 };
 
@@ -247,11 +262,11 @@ export const engineApi = {
 
 export const advisorApi = {
   getAdvice(data: AdvisorRequest) {
-    return api.post<AdvisorResponse>("/advisor/ask", data);
+    return api.post<AdvisorResponse>("/ai-advisor/ask", data);
   },
 
-  getSuggestions() {
-    return api.get<AdvisorResponse>("/advisor/suggestions");
+  getQuickTips(data: AdvisorContext) {
+    return api.post<QuickTipsResponse>("/ai-advisor/quick-tips", data);
   },
 };
 
@@ -259,15 +274,29 @@ export const advisorApi = {
 
 export const dashboardApi = {
   getStats() {
-    return api.get<DashboardStats>("/dashboard/stats");
+    return api.get<DashboardStats>("/analytics/dashboard");
+  },
+};
+
+// ─── Notifications API ─────────────────────────────────────────────────────
+
+export const notificationsApi = {
+  list(params?: { offset?: number; limit?: number; is_read?: boolean | null }) {
+    return api.get<NotificationListResponse>("/notifications/", { params });
   },
 
-  getNotifications() {
-    return api.get<Notification[]>("/dashboard/notifications");
+  getUnreadCount() {
+    return api.get<{ unread_count: number }>("/notifications/unread-count");
   },
 
-  markNotificationRead(id: string) {
-    return api.patch(`/dashboard/notifications/${id}/read`);
+  markRead(notificationIds: string[]) {
+    return api.patch<{ updated_count: number }>("/notifications/mark-read", {
+      notification_ids: notificationIds,
+    });
+  },
+
+  delete(id: string) {
+    return api.delete(`/notifications/${id}`);
   },
 };
 

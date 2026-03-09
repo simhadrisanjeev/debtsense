@@ -81,7 +81,7 @@ class AnalyticsService:
         debt_stmt = (
             select(
                 func.coalesce(func.sum(Debt.current_balance), 0).label("total_debt"),
-                func.coalesce(func.sum(Debt.principal_balance), 0).label("total_principal"),
+                func.coalesce(func.sum(Debt.principal_amount), 0).label("total_principal"),
                 func.coalesce(func.sum(Debt.minimum_payment), 0).label("monthly_payment"),
                 func.count(Debt.id).label("debt_count"),
             )
